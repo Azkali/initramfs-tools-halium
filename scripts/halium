@@ -642,6 +642,10 @@ mountroot() {
 
 		mount -n -t tmpfs tmpfs ${rootmnt}
 		cd ${rootmnt}
+		if [ -d /lib/modules ]; then
+			mkdir -p lib/modules
+			mv /lib/modules/* lib/modules/
+		fi
 		gzip -dc /ramdisk-recovery.img | cpio -i
 		cd -
 	elif ([ -e $imagefile ] || [ -n "$_syspart" ]) && [ "$BOOT_MODE" = "android" ]; then
