@@ -13,6 +13,7 @@ Depends: initramfs-tools,
          coreutils,
          busybox-static,
          e2fsprogs,
+         lvm2,
          ${misc:Depends}
 Description: tools for mounting an Ubuntu Touch rootfs
  This package contains the scripts to boot an Ubuntu Touch device.
