@@ -1,6 +1,8 @@
 #!/bin/sh -e
 
 MINKVER="2.6.24"
+# Keep this empty. A prereq puts us in a later pass than zz-busybox, and copy_exec does
+# not overwrite, so mount, chown and swapon would stay busybox applets.
 PREREQ=""
 DEB_HOST_MULTIARCH=$(dpkg-architecture -qDEB_HOST_MULTIARCH)
 
@@ -26,6 +28,7 @@ copy_exec /bin/chown /bin
 copy_exec /bin/mount /bin
 copy_exec /sbin/dmsetup /sbin
 copy_exec /sbin/dumpe2fs /sbin
+copy_exec /sbin/lvm /sbin
 copy_exec /lib/$DEB_HOST_MULTIARCH/libz.so.1
 copy_exec /usr/lib/$DEB_HOST_MULTIARCH/libcrypto.so
 copy_exec /usr/lib/$DEB_HOST_MULTIARCH/libdl.so

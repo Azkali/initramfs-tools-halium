@@ -463,36 +463,61 @@ mountroot() {
 	# Make sure the device has been created by udev before we try to mount
 	udevadm settle
 
-	# find the right partition
-	for partname in $partlist; do
-		part=$(find /dev -name $partname | tail -1)
-		[ -z "$part" ] && continue
-		path=$(readlink -f $part)
-		[ -n "$path" ] && break
-	done
-
 	# On systems with A/B partition layout, current slot is provided via cmdline parameter.
 	ab_slot_suffix=$(grep -o 'androidboot\.slot_suffix=..' /proc/cmdline | tail -1 | cut -d "=" -f2)
-	if [ -z "$path" ] && [ ! -z "$ab_slot_suffix" ] ; then
-		tell_kmsg "Searching for A/B data partition on slot $ab_slot_suffix."
 
+	# Check for LVM volume group in kernel cmdline and activate LVM
+	vg=""
+	for x in $(cat /proc/cmdline); do
+		case ${x} in
+		halium_lvm_vg=*)
+			vg=${x#*=}
+			;;
+		esac
+	done
+
+	# Try each volume group from comma-separated list, use first existing one
+	if [ -n "$vg" ]; then
+		OLDIFS=$IFS
+		IFS=','
+		found_vg=""
+		for vg_candidate in $vg; do
+			if lvm vgs "$vg_candidate" >/dev/null 2>&1; then
+				found_vg="$vg_candidate"
+				tell_kmsg "Volume group $found_vg found"
+				break
+			fi
+		done
+		IFS=$OLDIFS
+		if [ -z "$found_vg" ]; then
+			tell_kmsg "WARNING: None of the specified volume groups found ($vg)"
+		fi
+		vg="$found_vg"
+	fi
+
+	# First check if LVM volume group has userdata
+	if [ -n "$vg" ] && [ -e "/dev/$vg/userdata" ]; then
+		tell_kmsg "Using LVM userdata volume at /dev/$vg/userdata"
+		path="/dev/$vg/userdata"
+	else
+		# Find the right partition for userdata
 		for partname in $partlist; do
-			part=$(find /dev -name "$partname$ab_slot_suffix" | tail -1)
+			part=$(find /dev -name $partname | tail -1)
 			[ -z "$part" ] && continue
 			path=$(readlink -f $part)
 			[ -n "$path" ] && break
 		done
-	fi
 
-	# override with a possible cmdline parameter
-	if grep -q datapart= /proc/cmdline; then
-		for x in $(cat /proc/cmdline); do
-			case ${x} in
-			datapart=*)
-				path=${x#*=}
-				;;
-			esac
-		done
+		# Override with a possible cmdline parameter
+		if grep -q datapart= /proc/cmdline; then
+			for x in $(cat /proc/cmdline); do
+				case ${x} in
+				datapart=*)
+					path=${x#*=}
+					;;
+				esac
+			done
+		fi
 	fi
 
 	if [ -z "$path" ]; then
@@ -546,6 +571,16 @@ mountroot() {
 			esac
 		done
 
+		if [ -z "$_syspart_options" ]; then
+			_syspart_options=rw
+		fi
+	fi
+
+	# Override systempart with LVM rootfs if volume group is provided
+	if [ -n "$vg" ] && [ -e "/dev/$vg/rootfs" ]; then
+		tell_kmsg "Overriding systempart with LVM rootfs at /dev/$vg/rootfs"
+		_syspart="/dev/$vg/rootfs"
+		# Keep existing options if they were set, otherwise use rw
 		if [ -z "$_syspart_options" ]; then
 			_syspart_options=rw
 		fi
