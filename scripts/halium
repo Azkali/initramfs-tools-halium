@@ -72,7 +72,7 @@ identify_boot_mode() {
 	fi
 
 	# System-as-root or a device without dedicated recovery partition
-	if [ -f /ramdisk-recovery.img ] && [ -z "$normal_boot" ]; then
+	if ([ -f /ramdisk-recovery.img ] || [ -f /ramdisk-recovery.cpio.xz ]) && [ -z "$normal_boot" ]; then
 		BOOT_MODE="recovery"
 	fi
 
@@ -703,8 +703,16 @@ mountroot() {
 			mkdir -p lib/modules
 			mv /lib/modules/* lib/modules/
 		fi
-		gzip -dc /ramdisk-recovery.img | cpio -i
+		if [ -f /ramdisk-recovery.cpio.xz ]; then
+			xz -dc /ramdisk-recovery.cpio.xz | cpio -i
+		else
+			gzip -dc /ramdisk-recovery.img | cpio -i
+		fi
 		cd -
+
+		# run-init looks for /sbin/init, the recovery ramdisk only has /init
+		mkdir -p ${rootmnt}/sbin
+		[ -e ${rootmnt}/sbin/init ] || ln -s ../init ${rootmnt}/sbin/init
 	elif ([ -e $imagefile ] || [ -n "$_syspart" ]) && [ "$BOOT_MODE" = "android" ]; then
 		# Bootloader says this is factory or charger mode, boot into Android.
 		tell_kmsg "Android boot mode for factory or charger mode"
