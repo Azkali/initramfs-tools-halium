@@ -36,6 +36,20 @@ identify_boot_mode() {
 		androidboot.mode=*)
 			android_bootmode=${x#*=}
 			;;
+		# Android 9 system-as-root
+		skip_initramfs)
+			normal_boot="y"
+			;;
+		# Android 10+ recovery-as-boot
+		androidboot.force_normal_boot=1)
+			normal_boot="y"
+			;;
+		# Android 12+ (GKI 2.0+) recovery-as-boot
+		bootconfig)
+			if grep -q 'androidboot.force_normal_boot = "1"' /proc/bootconfig; then
+				normal_boot="y"
+			fi
+			;;
 		esac
 	done
 
@@ -55,6 +69,11 @@ identify_boot_mode() {
 		8) BOOT_MODE="android" ;; # Power off charging
 		9) BOOT_MODE="android" ;; # Low power charging
 		esac
+	fi
+
+	# System-as-root or a device without dedicated recovery partition
+	if [ -f /ramdisk-recovery.img ] && [ -z "$normal_boot" ]; then
+		BOOT_MODE="recovery"
 	fi
 
 	# On Android 8+ devices the 'android' boot mode is broken and should be avoided.
@@ -252,14 +271,7 @@ resize_userdata_if_needed() {
 	path=$1
 
 	# Partition size in 1k blocks
-	case $path in
-	/dev/mmcblk*)
-		pblocks=$(grep ${path#/dev/*} /proc/partitions | awk {'print $3'})
-		;;
-	/dev/disk*)
-		pblocks=$(grep $(basename $(readlink $path)) /proc/partitions | awk {'print $3'})
-		;;
-	esac
+	pblocks=$(grep ${path##*/} /proc/partitions | awk {'print $3'})
 	# Filesystem size in 4k blocks
 	fsblocks=$(dumpe2fs -h $path | grep "Block count" | awk {'print $3'})
 	# Difference between the reported sizes in 1k blocks
@@ -409,6 +421,23 @@ mount_kernel_modules() {
 	[ -e ${rootmnt}/android/system/lib/modules ] && mount --bind ${rootmnt}/android/system/lib/modules ${rootmnt}/lib/modules
 }
 
+load_kernel_modules() {
+	mkdir -p /lib/modules
+	cd /lib/modules
+	ln -sf /lib/modules "/lib/modules/$(uname -r)"
+
+	tell_kmsg "Loading kernel modules from $(pwd)"
+
+	cat modules.load | while read line; do
+		set -- $line
+		# Skip commented entries
+		[ "$1" = "#" ] && continue
+		modprobe -a "$1"
+	done
+
+	cd -
+}
+
 mountroot() {
 	# list of possible userdata partition names
 	partlist="userdata UDA DATAFS USERDATA"
@@ -421,6 +450,10 @@ mountroot() {
 
 	# Put all of this script's output into /dev/kmsg
 	exec &>/dev/kmsg
+
+	load_kernel_modules
+	tell_kmsg "Finished loading kernel modules"
+	sleep 1
 
 	# Mount root
 	#
@@ -496,6 +529,7 @@ mountroot() {
 	if [ -b /dev/disk/by-partlabel/super ]; then
 		tell_kmsg "trying to parse and dmsetup subpartitions from super partition"
 		/sbin/parse-android-dynparts /dev/disk/by-partlabel/super | sh
+		dmsetup mknodes
 	fi
 
 	# Set $_syspart if it is specified as systempart= on the command line
@@ -599,7 +633,22 @@ mountroot() {
 	identify_boot_mode
 
 	# Determine whether we should boot to rootfs or Android
-	if ([ -e $imagefile ] || [ -n "$_syspart" ]) && [ "$BOOT_MODE" = "android" ]; then
+	if [ "$BOOT_MODE" = "recovery" ]; then
+		tell_kmsg "Recovery boot mode for system-as-root devices"
+
+		# Clean up mounted partitions so recovery can manage them
+		umount -d /android-system /android-rootfs /halium-system /tmpmnt
+		dmsetup remove_all
+
+		mount -n -t tmpfs tmpfs ${rootmnt}
+		cd ${rootmnt}
+		if [ -d /lib/modules ]; then
+			mkdir -p lib/modules
+			mv /lib/modules/* lib/modules/
+		fi
+		gzip -dc /ramdisk-recovery.img | cpio -i
+		cd -
+	elif ([ -e $imagefile ] || [ -n "$_syspart" ]) && [ "$BOOT_MODE" = "android" ]; then
 		# Bootloader says this is factory or charger mode, boot into Android.
 		tell_kmsg "Android boot mode for factory or charger mode"
 
