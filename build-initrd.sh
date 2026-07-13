@@ -43,11 +43,22 @@ done
 [ -z $UBPORTSMIRROR ] && UBPORTSMIRROR=$DEFAULTUBPORTSMIRROR
 [ -z $RELEASE ] && RELEASE="stretch"
 [ -z $UBPORTSRELEASE ] && UBPORTSRELEASE="xenial"
-[ -z $ROOT ] && ROOT=./build/$ARCH
+[ -z $LVM ] && LVM=0
 [ -z $OUT ] && OUT=./out
 
+# LVM costs ramdisk size, so it is opt-in via LVM=1. Installing lvm2 is the only
+# difference. Use a separate chroot per variant, or it leaks into a later LVM=0 build.
+LVMPKGS=""
+VARIANT=""
+if [ "$LVM" = "1" ]; then
+	LVMPKGS="lvm2"
+	VARIANT="-lvm"
+fi
+
+[ -z $ROOT ] && ROOT=./build/$ARCH$VARIANT
+
 # list all packages needed for halium's initrd here
-[ -z $INCHROOTPKGS ] && INCHROOTPKGS="initramfs-tools dctrl-tools dmsetup e2fsprogs libc6-dev lvm2 zlib1g-dev libssl-dev busybox-static parse-android-dynparts"
+[ -z $INCHROOTPKGS ] && INCHROOTPKGS="initramfs-tools dctrl-tools dmsetup e2fsprogs libc6-dev $LVMPKGS zlib1g-dev libssl-dev busybox-static parse-android-dynparts"
 
 BOOTSTRAP_BIN="qemu-debootstrap --arch $ARCH --variant=minbase"
 
@@ -115,7 +126,7 @@ cp -a conf/halium ${ROOT}/usr/share/initramfs-tools/conf.d
 cp -a scripts/* ${ROOT}/usr/share/initramfs-tools/scripts
 cp -a hooks/* ${ROOT}/usr/share/initramfs-tools/hooks
 
-VER="$ARCH"
+VER="$ARCH$VARIANT"
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/lib/$DEB_HOST_MULTIARCH"
 
 do_chroot $ROOT "update-initramfs -tc -ktouch-$VER -v"

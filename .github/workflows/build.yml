@@ -7,6 +7,12 @@ jobs:
     strategy:
       matrix:
         arch: [armhf, arm64, amd64]
+        # Same scripts either way, the LVM build just also ships lvm2.
+        variant:
+          - suffix: ""
+            lvm: 0
+          - suffix: "-lvm"
+            lvm: 1
 
     steps:
       - name: Checkout
@@ -18,12 +24,12 @@ jobs:
           sudo apt-get install qemu-user-static debootstrap -y
 
       - name: Build initramfs
-        run: sudo ARCH=${{ matrix.arch }} ./build-initrd.sh
+        run: sudo ARCH=${{ matrix.arch }} LVM=${{ matrix.variant.lvm }} ./build-initrd.sh
 
       - name : Upload artifacts
         uses: actions/upload-artifact@master
         with:
-          name: halium-initramfs-${{ matrix.arch }}
+          name: halium-initramfs-${{ matrix.arch }}${{ matrix.variant.suffix }}
           path: out/
 
   upload:
