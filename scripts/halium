@@ -270,10 +270,22 @@ resize_userdata_if_needed() {
 
 	path=$1
 
+	# Resolve to the kernel name /proc/partitions actually lists: $path is a symlink
+	# for LVM logical volumes (/dev/$vg/userdata -> /dev/dm-0).
+	devname=$(basename $(readlink -f $path))
+
 	# Partition size in 1k blocks
-	pblocks=$(grep ${path##*/} /proc/partitions | awk {'print $3'})
+	pblocks=$(grep -w "$devname" /proc/partitions | awk {'print $3'})
 	# Filesystem size in 4k blocks
 	fsblocks=$(dumpe2fs -h $path | grep "Block count" | awk {'print $3'})
+
+	# Bail out unless both sizes are known. An empty $fsblocks would otherwise leave
+	# $dblocks equal to $pblocks and point resize2fs at a device holding no filesystem.
+	if [ -z "$pblocks" ] || [ -z "$fsblocks" ]; then
+		tell_kmsg "could not determine partition/filesystem size for $path, skipping resize"
+		return
+	fi
+
 	# Difference between the reported sizes in 1k blocks
 	dblocks=$((pblocks - 4 * fsblocks))
 	if [ $dblocks -gt 10000 ]; then
@@ -522,6 +534,16 @@ mountroot() {
 
 	if [ -z "$path" ]; then
 		halium_panic "Couldn't find data partition."
+	fi
+
+	# When LVM support is missing from the ramdisk, or halium_lvm_vg= is unset or names the
+	# wrong group, the search above silently falls back to the raw partition, which on an
+	# LVM device is the physical volume itself. Everything below then treats the PV as
+	# userdata: e2fsck picks up a stale ext4 backup superblock left over from before the
+	# conversion, restores that filesystem over the PV, and writes group descriptors at
+	# offset 4096, taking the LVM metadata area and the whole volume group with it.
+	if [ "$(blkid $path -o value -s TYPE)" = "LVM2_member" ]; then
+		halium_panic "$path is an LVM physical volume, but no volume group was activated. Pass halium_lvm_vg=<vg> on the kernel cmdline and make sure the ramdisk includes LVM support."
 	fi
 
 	# Format a wiped userdata without a filesystem header
